@@ -1,4 +1,13 @@
 (() => {
+  interface TranslationStats {
+    elapsedMs: number;
+    generatedTokens: number;
+    generationMs: number;
+    responses: number;
+    cacheHits: number;
+    estimated: boolean;
+  }
+
   const excluded = "script,style,noscript,form,textarea,input,select,option,code,pre,svg,math,[translate=no],[hidden],[inert],[aria-hidden=true]";
   const pending = new Map<Text, Element>();
   const watched = new Map<Element, number>();
@@ -9,6 +18,8 @@
   let selectionButtonEnabled = false;
   let pageError = "";
   let scanTimer: number | undefined;
+  let batchParagraphs = true;
+  let pageStats = newStats();
 
   const host = document.createElement("plamo-translator-panel");
   host.style.setProperty("all", "initial", "important");
@@ -32,6 +43,7 @@
   const selectionPanel = document.createElement("section");
   const pageStatus = document.createElement("output");
   const selectionResult = document.createElement("output");
+  const selectionMetrics = document.createElement("output");
   const selectionAction = makeButton("選択範囲を翻訳", () => {
     const text = selectedText;
     if (text) showSelection(text);
@@ -44,7 +56,7 @@
     selectionPanel.hidden = true;
   });
   pagePanel.append(pageStatus, retry, restore);
-  selectionPanel.append(selectionResult, closeSelection);
+  selectionPanel.append(selectionResult, selectionMetrics, closeSelection);
   shadow.append(pagePanel, selectionPanel, selectionAction);
   pagePanel.hidden = selectionPanel.hidden = selectionAction.hidden = true;
   let selectedText = "";
@@ -61,7 +73,21 @@
     if (!host.isConnected) document.documentElement.append(host);
   }
 
-  function requestTranslation(text: string, signal: AbortSignal): Promise<string> {
+  function newStats(): TranslationStats {
+    return { elapsedMs: 0, generatedTokens: 0, generationMs: 0, responses: 0, cacheHits: 0, estimated: false };
+  }
+
+  function formatStats(stats: TranslationStats): string {
+    const time = `翻訳時間 ${(stats.elapsedMs / 1000).toFixed(2)} 秒`;
+    if (stats.generationMs > 0) {
+      const speed = (1000 * stats.generatedTokens / stats.generationMs).toFixed(1);
+      return `${time} · ${stats.estimated ? "約 " : ""}${speed} tokens/s`;
+    }
+    return `${time} · ${stats.responses && stats.responses === stats.cacheHits
+      ? "キャッシュを使用" : "生成速度の計測値なし"}`;
+  }
+
+  function requestTranslation(text: string, signal: AbortSignal, stats: TranslationStats): Promise<string> {
     signal.throwIfAborted();
     return new Promise((resolve, reject) => {
       const port = chrome.runtime.connect({ name: "translate" });
@@ -77,8 +103,18 @@
       port.onMessage.addListener((message) => {
         finish();
         const reply = message as TranslationReply;
-        if ("error" in reply) reject(new Error(reply.error));
-        else resolve(reply.text);
+        if ("error" in reply) {
+          reject(new Error(reply.error));
+          return;
+        }
+        stats.responses++;
+        if (reply.cached) stats.cacheHits++;
+        if (reply.metrics) {
+          stats.generatedTokens += reply.metrics.tokens;
+          stats.generationMs += reply.metrics.milliseconds;
+          stats.estimated ||= !!reply.metrics.estimated;
+        }
+        resolve(reply.text);
       });
       port.onDisconnect.addListener(() => {
         signal.removeEventListener("abort", cancel);
@@ -88,7 +124,7 @@
     });
   }
 
-  async function translateLong(source: string, signal: AbortSignal): Promise<string> {
+  async function translateLong(source: string, signal: AbortSignal, stats: TranslationStats): Promise<string> {
     let translated = "";
     let rest = source;
     while (rest) {
@@ -102,7 +138,7 @@
       const chunk = rest.slice(0, end);
       const core = chunk.trim();
       if (core) {
-        const result = await requestTranslation(core, signal);
+        const result = await requestTranslation(core, signal, stats);
         const start = chunk.indexOf(core);
         translated += chunk.slice(0, start) + result + chunk.slice(start + core.length);
       } else {
@@ -160,7 +196,7 @@
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     for (let next = walker.nextNode(); next; next = walker.nextNode()) {
       const node = next as Text;
-      if (originals.has(node) || node === inFlight) continue;
+      if (originals.has(node) || inFlight.has(node)) continue;
       const anchor = candidate(node);
       if (pending.get(node) === anchor) continue;
       removePending(node);
@@ -180,12 +216,13 @@
   });
 
   function status(): string {
-    if (pageError) return pageError;
+    const stats = pageStats.elapsedMs ? ` · ${formatStats(pageStats)}` : "";
+    if (pageError) return pageError + stats;
     if (!pageRun) return "ページ翻訳を開始できます。";
     const changed = originals.size;
-    if (inFlight) return `翻訳中 · ${changed} 件反映 · ${pending.size} 件待機`;
-    if (pending.size) return `${changed} 件反映 · スクロールすると続きを翻訳します。`;
-    return changed ? `翻訳済み · ${changed} 件反映` : "翻訳対象のテキストがありません。";
+    if (inFlight.size) return `翻訳中 · ${changed} 件反映 · ${pending.size} 件待機${stats}`;
+    if (pending.size) return `${changed} 件反映 · スクロールすると続きを翻訳します。${stats}`;
+    return changed ? `翻訳済み · ${changed} 件反映${stats}` : "翻訳対象のテキストがありません。";
   }
 
   function renderProgress(): void {
@@ -193,30 +230,75 @@
     retry.hidden = !pageError;
   }
 
-  let inFlight: Text | undefined;
-  async function pump(run: AbortController): Promise<void> {
-    if (inFlight || run.signal.aborted) return;
-    while (!run.signal.aborted) {
-      let job: [Text, Element] | undefined;
-      for (const entry of pending) {
-        if (!near.has(entry[1])) continue;
-        job = entry;
+  const inFlight = new Set<Text>();
+  const maxParagraphs = 4;
+  const paragraphMarker = /\[\[(\d+)\]\]/g;
+
+  function nextPageBatch(): { node: Text; original: string }[] {
+    const batch: { node: Text; original: string }[] = [];
+    let length = 0;
+    let container: Element | null | undefined;
+    for (const [node, anchor] of pending) {
+      if (!near.has(anchor)) continue;
+      if (!node.isConnected || candidate(node) !== anchor) {
+        removePending(node);
+        continue;
+      }
+      const parent = node.parentElement;
+      const paragraph = batchParagraphs && parent?.tagName === "P" && parent.childNodes.length === 1
+        && !/\[\[\d+\]\]/.test(node.data);
+      if (batch.length && (!paragraph || parent.parentElement !== container || length + node.data.length > 900)) {
         break;
       }
-      if (!job) break;
-      const [node, anchor] = job;
       removePending(node);
-      if (!node.isConnected || candidate(node) !== anchor) continue;
-      const original = node.data;
-      inFlight = node;
+      batch.push({ node, original: node.data });
+      length += node.data.length;
+      if (!paragraph || length > 900 || batch.length === maxParagraphs) break;
+      container = parent.parentElement;
+    }
+    return batch;
+  }
+
+  async function translatePageBatch(
+    batch: { node: Text; original: string }[], signal: AbortSignal, stats: TranslationStats,
+  ): Promise<string[] | undefined> {
+    if (batch.length < 2) return;
+    const input = batch.map(({ original }, index) => `[[${index + 1}]] ${original.trim()}`).join("\n\n");
+    const translated = await requestTranslation(input, signal, stats);
+    const markers = [...translated.matchAll(paragraphMarker)];
+    if (markers.length !== batch.length || markers[0].index !== 0 ||
+      markers.some((marker, index) => marker[1] !== String(index + 1))) return;
+    const results = markers.map((marker, index) =>
+      translated.slice(marker.index + marker[0].length, markers[index + 1]?.index).trim());
+    if (results.some((text) => !text)) return;
+    return results.map((text, index) => {
+      const original = batch[index].original;
+      return original.slice(0, original.length - original.trimStart().length) + text +
+        original.slice(original.trimEnd().length);
+    });
+  }
+
+  async function pump(run: AbortController): Promise<void> {
+    if (inFlight.size || run.signal.aborted) return;
+    const stats = pageStats;
+    while (!run.signal.aborted) {
+      const batch = nextPageBatch();
+      if (!batch.length) break;
+      for (const { node } of batch) inFlight.add(node);
       renderProgress();
+      const start = performance.now();
       try {
-        const translated = await translateLong(original, run.signal);
-        if (!run.signal.aborted && node.isConnected && node.data === original && candidate(node)) {
-          originals.set(node, { original, translated });
-          if (original !== translated) node.data = translated;
-        } else if (!run.signal.aborted && node.isConnected) {
-          scheduleScan();
+        const results = await translatePageBatch(batch, run.signal, stats).catch(() => undefined);
+        run.signal.throwIfAborted();
+        if (batch.length > 1 && !results) batchParagraphs = false;
+        for (const [index, { node, original }] of batch.entries()) {
+          const translated = results?.[index] ?? await translateLong(original, run.signal, stats);
+          if (!run.signal.aborted && node.isConnected && node.data === original && candidate(node)) {
+            originals.set(node, { original, translated });
+            if (original !== translated) node.data = translated;
+          } else if (!run.signal.aborted && node.isConnected) {
+            scheduleScan();
+          }
         }
       } catch (error) {
         if (!run.signal.aborted) {
@@ -224,7 +306,8 @@
           pageError = error instanceof Error ? error.message : String(error);
         }
       } finally {
-        inFlight = undefined;
+        stats.elapsedMs += performance.now() - start;
+        inFlight.clear();
       }
     }
     renderProgress();
@@ -254,6 +337,8 @@
   function startPage(): void {
     if (pageRun) return;
     pageRun = new AbortController();
+    pageStats = newStats();
+    batchParagraphs = true;
     pageError = "";
     attachPanel();
     pagePanel.hidden = false;
@@ -270,6 +355,7 @@
       if (node.data === translated) node.data = original;
     }
     originals.clear();
+    pageStats = newStats();
     pageError = "";
     pagePanel.hidden = true;
   }
@@ -282,11 +368,18 @@
     selectionAction.hidden = true;
     selectionPanel.hidden = false;
     selectionResult.textContent = "選択範囲を翻訳中…";
+    selectionMetrics.textContent = "";
+    const stats = newStats();
+    const start = performance.now();
     void (async () => {
       try {
         if (text.length > 12_000) throw new Error("選択範囲は12,000文字以内にしてください。");
-        const result = await translateLong(text, run.signal);
-        if (!run.signal.aborted) selectionResult.textContent = result;
+        const result = await translateLong(text, run.signal, stats);
+        if (!run.signal.aborted) {
+          selectionResult.textContent = result;
+          stats.elapsedMs = performance.now() - start;
+          selectionMetrics.textContent = formatStats(stats);
+        }
       } catch (error) {
         if (!run.signal.aborted) selectionResult.textContent = error instanceof Error ? error.message : String(error);
       }

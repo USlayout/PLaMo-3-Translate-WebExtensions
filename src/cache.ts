@@ -32,21 +32,21 @@ export async function clearCache(): Promise<void> {
 }
 
 export async function cachedTranslation(
-  identity: string[], translate: () => Promise<string>, signal: AbortSignal,
-): Promise<string> {
+  identity: string[], translate: () => Promise<TranslationResult>, signal: AbortSignal,
+): Promise<TranslationResult> {
   const started = generation;
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(identity)));
   const key = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
   const hit = await access("readonly", (store) => store.get(key)).catch(() => undefined);
   signal.throwIfAborted();
-  if (started === generation && typeof hit === "string") return hit;
+  if (started === generation && typeof hit === "string") return { text: hit, cached: true };
 
-  const text = await translate();
+  const result = await translate();
   if (!signal.aborted && started === generation) {
     await access("readwrite", (store) => {
       if (started !== generation || signal.aborted) return;
-      return store.put(text, key);
+      return store.put(result.text, key);
     }).catch(() => undefined);
   }
-  return text;
+  return result;
 }

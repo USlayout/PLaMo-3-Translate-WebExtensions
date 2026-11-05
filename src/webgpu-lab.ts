@@ -81,8 +81,11 @@ translationForm.addEventListener("submit", async (event) => {
   translationStatus.textContent = "翻訳中…";
   const start = performance.now();
   try {
-    result.textContent = await engine.translate(text, "ja");
-    translationStatus.textContent = `翻訳 ${seconds(start)}`;
+    const { text: translation, metrics } = await engine.translate(text, "ja");
+    result.textContent = translation;
+    const rate = metrics ? `${metrics.estimated ? "約 " : ""}${(1000 * metrics.tokens / metrics.milliseconds).toFixed(1)} tokens/s`
+      : "生成速度の計測値なし";
+    translationStatus.textContent = `翻訳 ${seconds(start)} · ${rate}`;
   } catch (error) {
     translationStatus.textContent = `翻訳失敗。 ${message(error)} モデルを読み込み直してください。`;
     await engine.dispose().catch(() => undefined);

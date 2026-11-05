@@ -56,7 +56,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         return;
       }
       if (!Object.hasOwn(languages, message.target)) throw new Error("翻訳先が無効です。");
-      respond({ text: await engine.translate(message.text, message.target, signal) });
+      respond(await engine.translate(message.text, message.target, signal));
     } catch (error) {
       if (message.action === "translate" && !signal.aborted) {
         loaded = undefined;

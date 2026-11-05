@@ -2,6 +2,7 @@ import { cachedTranslation, clearCache } from "./cache.js";
 import { getSettings, languages, normalizeServer } from "./settings.js";
 import { gpuRequest } from "./gpu-bridge.js";
 import { gpuModelKey, type GpuModel } from "./gpu-model.js";
+import { generationMetrics } from "./generation-metrics.js";
 
 const model = "plamo-3-translate";
 const maxParallel = 2;
@@ -41,7 +42,7 @@ async function serverRequest(server: string, path: string, options: RequestInit 
   return response;
 }
 
-async function translate(text: string, settings: ExtensionSettings, signal: AbortSignal): Promise<string> {
+async function translate(text: string, settings: ExtensionSettings, signal: AbortSignal): Promise<TranslationResult> {
   const { server, target } = settings;
   if (settings.engine === "webgpu") {
     const model = (await chrome.storage.local.get(gpuModelKey))[gpuModelKey] as GpuModel | undefined;
@@ -49,10 +50,11 @@ async function translate(text: string, settings: ExtensionSettings, signal: Abor
     return cachedTranslation(["webgpu-v1", model.id, target, text], async () => {
       const result = await gpuRequest({ action: "translate", model, text, target }, signal);
       if (!result.text) throw new Error("WebGPU から訳文を取得できませんでした。");
-      return result.text;
+      return { text: result.text, metrics: result.metrics };
     }, signal);
   }
   return cachedTranslation(["chat-v1", server, model, target, text], async () => {
+    const start = performance.now();
     const response = await serverRequest(server, "/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -72,7 +74,7 @@ async function translate(text: string, settings: ExtensionSettings, signal: Abor
     if (choice?.finish_reason === "length") throw new Error("訳文が出力上限に達しました。");
     const result = choice?.message?.content;
     if (typeof result !== "string" || !result.trim()) throw new Error("訳文を取得できませんでした。");
-    return result.trim();
+    return { text: result.trim(), metrics: generationMetrics(data, performance.now() - start) };
   }, signal);
 }
 
@@ -118,8 +120,7 @@ chrome.runtime.onConnect.addListener((port) => {
           try {
             const settings = await getSettings(resolveDefaultEngine);
             if (!Object.hasOwn(languages, settings.target)) throw new Error("翻訳先の設定を確認してください。");
-            const text = await translate(message, settings, controller.signal);
-            reply({ text });
+            reply(await translate(message, settings, controller.signal));
           } catch (error) {
             reply({ error: errorMessage(error) });
           } finally {

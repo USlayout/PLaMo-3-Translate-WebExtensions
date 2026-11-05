@@ -31,7 +31,7 @@ type Command =
 
 export async function gpuRequest(
   command: Command, signal?: AbortSignal,
-): Promise<{ text?: string; layers?: string; available?: boolean }> {
+): Promise<{ text?: string; metrics?: GenerationMetrics; layers?: string; available?: boolean }> {
   signal?.throwIfAborted();
   if (command.action === "release") {
     await creation;

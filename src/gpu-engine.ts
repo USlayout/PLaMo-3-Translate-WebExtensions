@@ -1,8 +1,14 @@
+import { generationMetrics } from "./generation-metrics.js";
+
 interface RuntimeEngine {
   loadModel(files: File[], options: { n_ctx: number; n_threads: number; n_gpu_layers: number }): Promise<void>;
   createCompletion(options: {
     prompt: string; stop: string[]; temperature: number; max_tokens: number; stream: false; abortSignal?: AbortSignal;
-  }): Promise<{ choices: { text: string; finish_reason: string }[] }>;
+  }): Promise<{
+    choices: { text: string; finish_reason: string }[];
+    timings?: { predicted_n?: number; predicted_ms?: number };
+    usage?: { completion_tokens?: number };
+  }>;
   exit(): Promise<void>;
 }
 
@@ -61,11 +67,12 @@ export class GpuEngine {
     }
   }
 
-  async translate(text: string, target: string, signal?: AbortSignal): Promise<string> {
+  async translate(text: string, target: string, signal?: AbortSignal): Promise<TranslationResult> {
     signal?.throwIfAborted();
     if (!this.engine) throw new Error("WebGPU モデルが読み込まれていません。");
     // Break literal PFML3 delimiters in webpage text before building the prompt.
     const input = text.replaceAll("<|plamo:", "<\u200B|plamo:");
+    const start = performance.now();
     const response = await this.withTimeout(this.engine.createCompletion({
       prompt: "<|plamo:tag|>dataset<|plamo:msg|>translation" +
         `<|plamo:tag|>input<|plamo:msg|>${input}` +
@@ -78,7 +85,7 @@ export class GpuEngine {
     if (choice?.finish_reason === "length") throw new Error("訳文が出力上限に達しました。");
     const translation = choice?.text.trim();
     if (!translation) throw new Error("訳文が空でした。");
-    return translation;
+    return { text: translation, metrics: generationMetrics(response, performance.now() - start) };
   }
 
   async dispose(): Promise<void> {

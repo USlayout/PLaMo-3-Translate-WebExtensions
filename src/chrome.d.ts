@@ -55,4 +55,16 @@ interface ExtensionSettings {
   selectionButton: boolean;
 }
 
-type TranslationReply = { text: string } | { error: string };
+interface GenerationMetrics {
+  tokens: number;
+  milliseconds: number;
+  estimated?: true;
+}
+
+interface TranslationResult {
+  text: string;
+  metrics?: GenerationMetrics;
+  cached?: true;
+}
+
+type TranslationReply = TranslationResult | { error: string };
