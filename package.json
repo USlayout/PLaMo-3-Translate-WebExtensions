@@ -1,0 +1,13 @@
+{
+  "name": "plamo-web-translator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc && node scripts/build.mjs",
+    "server": "node scripts/start-server.mjs"
+  },
+  "devDependencies": {
+    "typescript": "5.8.3"
+  }
+}

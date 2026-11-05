@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PLaMo Web Translator</title>
+<link rel="stylesheet" href="ui.css">
+<body class="popup">
+  <main>
+    <p class="eyebrow">ローカル翻訳</p>
+    <h1>PLaMo Web Translator</h1>
+    <p id="target" class="muted"></p>
+    <button id="start" class="primary">ページを翻訳</button>
+    <div class="actions">
+      <button id="restore">原文に戻す</button>
+      <button id="selection">選択範囲を翻訳</button>
+    </div>
+    <p id="status" role="status">ページの状態を確認中…</p>
+    <button id="options" class="link">設定を開く</button>
+  </main>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

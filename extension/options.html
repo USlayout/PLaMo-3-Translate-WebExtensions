@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PLaMo Web Translator 設定</title>
+<link rel="stylesheet" href="ui.css">
+<body class="options">
+  <main>
+    <p class="eyebrow">ローカル翻訳</p>
+    <h1>PLaMo Web Translator 設定</h1>
+    <form id="settings">
+      <label>翻訳エンジン
+        <select id="engine">
+          <option value="llama.cpp">llama.cpp</option>
+          <option value="webgpu">WebGPU</option>
+        </select>
+      </label>
+      <label id="server-label" for="server">llama-server の接続先</label>
+      <input id="server" type="url" placeholder="http://127.0.0.1:8000" required>
+      <label for="target">翻訳先</label>
+      <select id="target"></select>
+      <label class="check"><input id="auto" type="checkbox"> ページを開いたら自動翻訳する</label>
+      <label class="check"><input id="selection" type="checkbox"> 選択範囲の翻訳ボタンを表示する</label>
+      <button class="primary" type="submit">保存</button>
+      <p id="save-status" role="status"></p>
+    </form>
+    <section id="gpu-model-section" aria-labelledby="gpu-heading" hidden>
+      <h2 id="gpu-heading">WebGPU モデル</h2>
+      <p id="gpu-model-status" role="status"></p>
+      <form id="gpu-model-form">
+        <label for="gpu-models">登録済みモデル</label>
+        <select id="gpu-models">
+          <option value="">新しいモデルを登録</option>
+        </select>
+        <label for="gpu-files">PLaMo 3 Translate の GGUF（0.8B・2B・8B）</label>
+        <input id="gpu-files" type="file" accept=".gguf" multiple>
+        <small>登録すると拡張機能のストレージにコピーします。分割ファイルはすべて選んでください。</small>
+        <label for="gpu-layers">GPU に割り当てる層数</label>
+        <input id="gpu-layers" type="number" min="1" max="99999" step="1" placeholder="空欄なら全層">
+        <div class="actions">
+          <button type="submit" class="primary" id="gpu-prepare">登録・読み込み</button>
+          <button type="button" id="gpu-remove">選択したモデルを削除</button>
+        </div>
+      </form>
+    </section>
+    <section aria-labelledby="diagnostics">
+      <h2 id="diagnostics">接続とキャッシュ</h2>
+      <p id="connection" role="status"></p>
+      <p id="webgpu" class="muted"></p>
+      <p><a href="webgpu-lab.html" target="_blank" rel="noopener">WebGPU 翻訳の検証ページを開く</a></p>
+      <div class="actions">
+        <button id="check">保存済みの接続先を確認</button>
+        <button id="clear">キャッシュを消去</button>
+      </div>
+      <p id="cache-status" role="status"></p>
+    </section>
+  </main>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

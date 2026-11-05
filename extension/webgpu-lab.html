@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PLaMo WebGPU 検証</title>
+<link rel="stylesheet" href="ui.css">
+<body>
+  <main class="lab">
+    <h1>PLaMo WebGPU 検証</h1>
+    <p>手元の PLaMo 3 Translate（0.8B・2B・8B）の GGUF を使い、ブラウザー内で英語から日本語への翻訳を試せます。</p>
+    <form id="model-form">
+      <label for="model-file">PLaMo 3 Translate の GGUF ファイル</label>
+      <input id="model-file" type="file" accept=".gguf" aria-describedby="file-help" multiple required disabled>
+      <small id="file-help">分割済みの GGUF は、同じモデルのファイルをすべて選んでください。</small>
+      <label for="backend">実行方式</label>
+      <select id="backend" disabled>
+        <option value="gpu">WebGPU</option>
+        <option value="cpu">CPU（比較用）</option>
+      </select>
+      <label for="gpu-layers">GPU に割り当てる層数</label>
+      <input id="gpu-layers" type="number" min="1" max="99999" step="1" placeholder="空欄なら全層" disabled>
+      <button id="load" class="primary" disabled>モデルを読み込む</button>
+    </form>
+    <p id="model-status" role="status">推論ライブラリを準備中…</p>
+    <form id="translation-form">
+      <label for="source">翻訳する英文</label>
+      <textarea id="source" rows="3" maxlength="500" required>The meeting has been moved to next Monday.</textarea>
+      <button id="translate" class="primary" disabled>日本語に翻訳</button>
+    </form>
+    <p id="translation-status" role="status"></p>
+    <h2>訳文</h2>
+    <output id="result"></output>
+    <details>
+      <summary>モデルと実行のログ</summary>
+      <pre id="logs" tabindex="0"></pre>
+    </details>
+  </main>
+  <script type="module" src="webgpu-lab.js"></script>
+</body>
+</html>
