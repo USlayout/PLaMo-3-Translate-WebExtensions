@@ -11,7 +11,7 @@ npm ci
 npm run build
 ```
 
-1. Chromeは `chrome://extensions`、Edgeは `edge://extensions` を開きます。
+1. Chromeは `chrome://extensions`、Edgeは `edge://extensions`、vivaldiは `vivaldi://extensions` を開きます。
 2. **開発者モード**を有効にし、**パッケージ化されていない拡張機能を読み込む**から、このプロジェクトの `dist` フォルダーを選びます。
 3. 拡張機能のポップアップで **設定を開く** を押します。初回はWebGPUのアダプターが利用できればWebGPU、利用できなければllama.cppが選ばれます。保存済みの選択は優先されます。
 
