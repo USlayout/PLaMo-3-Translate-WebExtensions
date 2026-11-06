@@ -18,8 +18,8 @@
   let selectionButtonEnabled = false;
   let pageError = "";
   let scanTimer: number | undefined;
-  let batchParagraphs = true;
   let pageStats = newStats();
+  let pageTranslations = new Map<string, string>();
 
   const host = document.createElement("plamo-translator-panel");
   host.style.setProperty("all", "initial", "important");
@@ -231,56 +231,60 @@
   }
 
   const inFlight = new Set<Text>();
-  const maxParagraphs = 4;
-  const paragraphMarker = /\[\[(\d+)\]\]/g;
+  const maxBatchItems = 12;
+  const maxBatchChars = 900;
+  // The circled numbers are single tokens in the PLaMo tokenizer.
+  const firstMarker = 0x2460;
+  const segmentMarker = /[\u2460-\u2473]/g;
 
   function nextPageBatch(): { node: Text; original: string }[] {
     const batch: { node: Text; original: string }[] = [];
     let length = 0;
-    let container: Element | null | undefined;
     for (const [node, anchor] of pending) {
       if (!near.has(anchor)) continue;
       if (!node.isConnected || candidate(node) !== anchor) {
         removePending(node);
         continue;
       }
-      const parent = node.parentElement;
-      const paragraph = batchParagraphs && parent?.tagName === "P" && parent.childNodes.length === 1
-        && !/\[\[\d+\]\]/.test(node.data);
-      if (batch.length && (!paragraph || parent.parentElement !== container || length + node.data.length > 900)) {
-        break;
-      }
+      const itemLength = node.data.trim().length + 3; // Includes the numbered marker and line break.
+      const canBatch = node.data.search(segmentMarker) === -1 && length + itemLength <= maxBatchChars;
+      if (batch.length && !canBatch) break;
       removePending(node);
       batch.push({ node, original: node.data });
-      length += node.data.length;
-      if (!paragraph || length > 900 || batch.length === maxParagraphs) break;
-      container = parent.parentElement;
+      length += itemLength;
+      if (!canBatch || batch.length === maxBatchItems) break;
     }
     return batch;
   }
 
   async function translatePageBatch(
-    batch: { node: Text; original: string }[], signal: AbortSignal, stats: TranslationStats,
-  ): Promise<string[] | undefined> {
-    if (batch.length < 2) return;
-    const input = batch.map(({ original }, index) => `[[${index + 1}]] ${original.trim()}`).join("\n\n");
+    batch: { node: Text; original: string }[], signal: AbortSignal,
+    stats: TranslationStats, translations: Map<string, string>,
+  ): Promise<void> {
+    const sources = [...new Set(batch.map(({ original }) => original.trim()))]
+      .filter((source) => !translations.has(source));
+    if (sources.length < 2) return;
+    const input = sources.map((source, index) =>
+      `${String.fromCharCode(firstMarker + index)} ${source}`).join("\n");
     const translated = await requestTranslation(input, signal, stats);
-    const markers = [...translated.matchAll(paragraphMarker)];
-    if (markers.length !== batch.length || markers[0].index !== 0 ||
-      markers.some((marker, index) => marker[1] !== String(index + 1))) return;
-    const results = markers.map((marker, index) =>
-      translated.slice(marker.index + marker[0].length, markers[index + 1]?.index).trim());
-    if (results.some((text) => !text)) return;
-    return results.map((text, index) => {
-      const original = batch[index].original;
-      return original.slice(0, original.length - original.trimStart().length) + text +
-        original.slice(original.trimEnd().length);
-    });
+    const markers = [...translated.matchAll(segmentMarker)].map((marker) => ({
+      offset: marker.index, item: marker[0].charCodeAt(0) - firstMarker,
+    }));
+    if (markers[0]?.offset !== 0 || markers.some(({ item }, index) =>
+      item >= sources.length || (index > 0 && item <= markers[index - 1].item))) return;
+    for (const [index, { item, offset }] of markers.entries()) {
+      const next = markers[index + 1];
+      // A missing marker makes the preceding segment ambiguous. Keep only proven boundaries.
+      if ((next?.item ?? sources.length) !== item + 1) continue;
+      const text = translated.slice(offset + 1, next?.offset).trim();
+      if (text) translations.set(sources[item], text);
+    }
   }
 
   async function pump(run: AbortController): Promise<void> {
     if (inFlight.size || run.signal.aborted) return;
     const stats = pageStats;
+    const translations = pageTranslations;
     while (!run.signal.aborted) {
       const batch = nextPageBatch();
       if (!batch.length) break;
@@ -288,11 +292,16 @@
       renderProgress();
       const start = performance.now();
       try {
-        const results = await translatePageBatch(batch, run.signal, stats).catch(() => undefined);
+        await translatePageBatch(batch, run.signal, stats, translations).catch(() => undefined);
         run.signal.throwIfAborted();
-        if (batch.length > 1 && !results) batchParagraphs = false;
-        for (const [index, { node, original }] of batch.entries()) {
-          const translated = results?.[index] ?? await translateLong(original, run.signal, stats);
+        for (const { node, original } of batch) {
+          const source = original.trim();
+          const cached = translations.get(source);
+          const start = original.indexOf(source);
+          const translated = cached === undefined
+            ? await translateLong(original, run.signal, stats)
+            : original.slice(0, start) + cached + original.slice(start + source.length);
+          if (cached === undefined) translations.set(source, translated.trim());
           if (!run.signal.aborted && node.isConnected && node.data === original && candidate(node)) {
             originals.set(node, { original, translated });
             if (original !== translated) node.data = translated;
@@ -338,7 +347,7 @@
     if (pageRun) return;
     pageRun = new AbortController();
     pageStats = newStats();
-    batchParagraphs = true;
+    pageTranslations = new Map();
     pageError = "";
     attachPanel();
     pagePanel.hidden = false;
@@ -356,6 +365,7 @@
     }
     originals.clear();
     pageStats = newStats();
+    pageTranslations.clear();
     pageError = "";
     pagePanel.hidden = true;
   }
