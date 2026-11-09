@@ -1,10 +1,10 @@
 # PLaMo Web Translator
 
-Chrome・Edgeで、開いているページや選択範囲を PLaMo 3 Translate で翻訳する拡張機能です。翻訳エンジンは、ブラウザー内で動く **WebGPU** と、PC上で動く **llama.cpp** から選べます。既定の翻訳先は日本語です。
+Chrome・Vivaldi・Edgeで、開いているページや選択範囲を PLaMo 3 Translate で翻訳する拡張機能です。翻訳エンジンは、ブラウザー内で動く **WebGPU** と、PC上で動く **llama.cpp** から選べます。既定の翻訳先は日本語です。
 
 ## 1. 拡張機能をインストールする
 
-ChromeまたはEdgeと、Node.js・npmを用意します。プロジェクトのルートで以下を実行してください。WebGPUランタイムの wllama はリポジトリに同梱しています。
+Chrome、VivaldiまたはEdgeと、Node.js・npmを用意します。プロジェクトのルートで以下を実行してください。WebGPUランタイムの wllama はリポジトリに同梱しています。
 
 ```powershell
 npm ci
